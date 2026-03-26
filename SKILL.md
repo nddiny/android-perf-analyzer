@@ -67,16 +67,103 @@ find "$TEMP_DIR" -type f | sort
 
 Common log file patterns:
 - `*.trace` - Method traces (CPU profiling)
-- `*.systrace` - Systrace files
+- `*.systrace` - Systrace HTML files
+- `*.html`, `*.htm` - Systrace HTML format
+- `*.pftrace`, `*.perfetto-trace` - Perfetto trace files
+- `*.prototrace` - Perfetto protobuf traces
 - `*.hprof` - Heap dumps
 - `meminfo*` - Memory info files
 - `batterystats*` - Battery statistics
-- `*.json` - Performance traces
+- `*.json` - Perfetto JSON traces
 - `*.txt` - Logcat or other text logs
 - `*boot*` - Startup logs
 - `*network*` - Network logs
 
 ## Phase 2: Log Categorization & Parsing
+
+### 2.0 Systrace Analysis (HTML格式)
+
+**Files to look for:**
+- `*.systrace` - Systrace文件
+- `*.html`, `*.htm` - Systrace HTML格式
+- `trace.html` - 常见的Systrace输出名
+
+**Systrace关键事件:**
+
+| 事件名 | 含义 | 正常值 | 警告值 | 危险值 |
+|--------|------|--------|--------|--------|
+| `Choreographer#doFrame` | 帧渲染 | <16ms | 16-32ms | >32ms |
+| `ViewRootImpl.performTraversals` | 布局遍历 | <5ms | 5-10ms | >10ms |
+| `Measure` | 测量阶段 | <2ms | 2-4ms | >4ms |
+| `Layout` | 布局阶段 | <2ms | 2-4ms | >4ms |
+| `Draw` | 绘制阶段 | <8ms | 8-12ms | >12ms |
+| `SurfaceView` | Surface合成 | <8ms | 8-16ms | >16ms |
+| `Input` | 输入处理 | <4ms | 4-8ms | >8ms |
+
+**Detection Script:**
+```bash
+grep -E "(doFrame|performTraversals|SurfaceView|input)" "$TEMP_DIR"/*.html 2>/dev/null | head -50
+```
+
+### 2.0.1 Systrace 分析模式
+
+**丢帧分析:**
+- 计算 doFrame >16ms 的事件比例
+- 丢帧率 >30% = Critical
+- 丢帧率 >10% = High
+- 丢帧率 >5% = Medium
+
+**阶段分解:**
+- Measure >4ms: 检查自定义View.measure
+- Layout >4ms: 检查复杂布局或高度自定义View
+- Draw >8ms: 检查canvas操作或过深绘制缓存
+
+### 2.0 Perfetto Analysis (JSON/PB格式)
+
+**Files to look for:**
+- `*.pftrace` - Perfetto trace
+- `*.perfetto-trace` - Perfetto trace
+- `*.prototrace` - Protobuf格式
+- `*.json` - Perfetto JSON格式
+
+**Perfetto 关键追踪:**
+
+| 追踪名 | 含义 | 阈值 |
+|--------|------|------|
+| `sched/sched_switch` | 进程切换 | >10ms延迟 |
+| `power/cpu_frequency` | CPU频率 | 低频率持续 |
+| `power/gpu_frequency` | GPU频率 | 低频率持续 |
+| `vmstat` | 内存状态 | 可用内存低 |
+| `android/app/drawn_frames` | 应用帧率 | >16ms/帧 |
+| `net/netstack` | 网络栈 | >100ms DNS |
+| `power/wakelock` | 电源锁 | >1min持有 |
+
+**Detection Script:**
+```bash
+grep -E "(sched|frame|wakelock|gc|cpu_frequency)" "$TEMP_DIR"/*.json 2>/dev/null | head -50
+```
+
+### 2.0.2 Perfetto 分析模式
+
+**CPU分析:**
+- sched_switch延迟 >10ms = High
+- CPU频率低 = 检查热节流
+- 调度器延迟 = 线程竞争
+
+**内存分析:**
+- gc_* 事件频繁 = Medium
+- alloc size >1MB = High
+- heap grow = 内存泄漏迹象
+
+**渲染分析:**
+- drawn_frames >16ms = High
+- jank frames >30% = Critical
+- SurfaceFlinger延迟 = 显示问题
+
+**电池分析:**
+- wakelock >1min = High
+- sensor事件 >100/s = Medium
+- wifi_scan 频繁 = Low
 
 ### 2.1 CPU Log Analysis
 
